@@ -1,12 +1,21 @@
-from enum import Enum
-from datetime import datetime
-from time import sleep
 import os
+import re
+import subprocess
+import tempfile
+from datetime import datetime
+from enum import Enum
+from pathlib import Path
+from re import Match
+from time import sleep
+from urllib.parse import parse_qs, urlsplit
 
 import requests
-from urllib.parse import parse_qs, urlsplit
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill, Side, Border, Font
+from openpyxl.styles import Border, Font, PatternFill, Side
+
+__version__ = "1.0.0"
+
+RELEASE_URL = "https://api.github.com/repos/Tarodictrl/GenshinWishHistory/releases/latest"
 
 
 class GachaType(Enum):
@@ -57,6 +66,56 @@ class ZZZ:
             sleep(0.3)
 
         return signals
+
+
+class Gacha:
+    def __init__(self) -> None:
+        self._api_url = "https://public-operation-nap-sg.hoyoverse.com"
+        self._log_location = f"{os.environ['USERPROFILE']}\\AppData\\LocalLow\\miHoYo\\ZenlessZoneZero\\Player.log"
+
+    @staticmethod
+    def _getCacheUrl(match: Match[str]):
+        game_dir = match.group()
+        web_caches = sorted(Path(game_dir + "\\webCaches").iterdir(),
+                            key=os.path.getmtime, reverse=True
+                            )
+        cache_file_path = f"{web_caches[0]}\\Cache\\Cache_Data\\data_2"
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, 'temp_cache')
+        os.system(f'echo.>{temp_path}')
+        subprocess.run(['powershell', '-Command', f'copy "{cache_file_path}" "{temp_path}"'])
+        with open(temp_path, encoding="utf-8", errors='ignore') as f:
+            content = f.read()
+        return content.split("1/0/")
+
+    def loadLogs(self):
+        if not os.path.exists(self._log_location):
+            raise FileNotFoundError("Cannot find the log file! Make sure to open the wish history first!")
+        with open(self._log_location) as f:
+            return f.read()
+
+    def loadCaches(self, logs: str) -> list:
+        match = re.search(r"(.:/.+ZenlessZoneZero_Data)", logs, re.I)
+        found = [x for x in self._getCacheUrl(match) if re.search("webview_gacha", x) is not None]
+        return found
+
+    def getLink(self, cache: str) -> str | None:
+        link = re.findall(r"(https.+?end_id=)", cache)
+        if not link:
+            return
+        test_result = self.testUrl(link[0])
+        if test_result:
+            return link
+
+    def testUrl(self, url: str) -> bool:
+        try:
+            response = requests.get(url=url)
+            if response.status_code == 200:
+                test_result = response.json()
+                return test_result.get("retcode", -1) == 0
+        except TimeoutError:
+            print("Check link failed!")
+        return False
 
 
 class Saver:
@@ -130,12 +189,35 @@ class Saver:
                 except Exception:
                     pass
             adjusted_width = (max_length + 6)
-            sheet.column_dimensions[column[0].column_letter].width = adjusted_width
+            sheet.column_dimensions[
+                column[0].column_letter
+            ].width = adjusted_width
+
+
+def garant_counter(data: list[dict]):
+    a_tier_counter = 0
+    s_tier_counter = 0
+    for row in reversed(data):
+        a_tier_counter += 1
+        s_tier_counter += 1
+        rank_type = row["rank_type"]
+        if rank_type == "3":
+            row["count"] = a_tier_counter
+            a_tier_counter = 0
+        if rank_type == "4":
+            row["count"] = s_tier_counter
+            a_tier_counter = 0
+            s_tier_counter = 0
+    return data
 
 
 def normalize_data(data: list[dict]):
+    data = garant_counter(data)
     return [
-        dict(name=x["name"], type=x["item_type"], rank=x["rank_type"], time=x["time"])
+        dict(name=x["name"], type=x["item_type"],
+             rank=x["rank_type"], time=x["time"],
+             count=x["count"]
+             )
         for x in data
     ]
 
@@ -150,21 +232,37 @@ def printLogo():
 """)
 
 
-printLogo()
+def checkNeedUpdate() -> bool:
+    response = requests.get(RELEASE_URL)
+    if response.status_code == 200:
+        latest_version = response.json().get("tag_name")
+        if __version__ < latest_version:
+            return True
+    return False
+
 
 if __name__ == "__main__":
-    url = input("Enter the URL: ")
-    zzz = ZZZ(url)
     saver = Saver()
-    try:
-        saver.insert("Event", normalize_data(zzz.getBanner(2)))
-        saver.insert("Stable", normalize_data(zzz.getBanner(1)))
-        saver.insert("Banbu", normalize_data(zzz.getBanner(5)))
-        saver.save()
-        print("\033[92mDone!\x1b[0m")
-        print("\033[92mFile saved as:\x1b[0m", saver.save())
-    except Exception as e:
-        print("An error occurred: ", e)
+    gacha = Gacha()
+    logs = gacha.loadLogs()
+    caches = gacha.loadCaches(logs)
+    for i in range(len(caches) - 1, -1, -1):
+        os.system("cls")
+        printLogo()
+        print(f"Checking link: {i}\n")
+        link = gacha.getLink(caches[i])
+        if link:
+            print(link)
+            zzz = ZZZ(link)
+            saver.insert("Event", normalize_data(zzz.getBanner(2)))
+            saver.insert("Stable", normalize_data(zzz.getBanner(1)))
+            saver.insert("Banbu", normalize_data(zzz.getBanner(5)))
+            saver.save()
+            print("\033[92mDone!\x1b[0m")
+            print("\033[92mFile saved as:\x1b[0m", saver.save())
+            flag = True
+            break
+        sleep(1)
     for i in range(9, 0, -1):
         print(f"Window will close after: {i} s", end="\r", flush=True)
         sleep(1)
