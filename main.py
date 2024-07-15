@@ -13,6 +13,10 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Border, Font, PatternFill, Side
 
+__version__ = "1.0.0"
+
+RELEASE_URL = "https://api.github.com/repos/Tarodictrl/GenshinWishHistory/releases/latest"
+
 
 class GachaType(Enum):
     STABLE = 1
@@ -96,8 +100,10 @@ class Gacha:
         return found
 
     def getLink(self, cache: str) -> str | None:
-        link = re.findall(r"(https.+?end_id=)", cache)[0]
-        test_result = self.testUrl(link)
+        link = re.findall(r"(https.+?end_id=)", cache)
+        if not link:
+            return
+        test_result = self.testUrl(link[0])
         if test_result:
             return link
 
@@ -226,31 +232,37 @@ def printLogo():
 """)
 
 
+def checkNeedUpdate() -> bool:
+    response = requests.get(RELEASE_URL)
+    if response.status_code == 200:
+        latest_version = response.json().get("tag_name")
+        if __version__ < latest_version:
+            return True
+    return False
+
+
 if __name__ == "__main__":
     saver = Saver()
     gacha = Gacha()
-    try:
-        logs = gacha.loadLogs()
-        caches = gacha.loadCaches(logs)
-        for i in range(len(caches) - 1, -1, -1):
-            os.system("cls")
-            printLogo()
-            print(f"Checking link: {i}\n")
-            link = gacha.getLink(caches[i])
-            if link:
-                print(link)
-                zzz = ZZZ(link)
-                saver.insert("Event", normalize_data(zzz.getBanner(2)))
-                saver.insert("Stable", normalize_data(zzz.getBanner(1)))
-                saver.insert("Banbu", normalize_data(zzz.getBanner(5)))
-                saver.save()
-                print("\033[92mDone!\x1b[0m")
-                print("\033[92mFile saved as:\x1b[0m", saver.save())
-                flag = True
-                break
-            sleep(1)
-    except Exception as e:
-        print("An error occurred: ", e)
+    logs = gacha.loadLogs()
+    caches = gacha.loadCaches(logs)
+    for i in range(len(caches) - 1, -1, -1):
+        os.system("cls")
+        printLogo()
+        print(f"Checking link: {i}\n")
+        link = gacha.getLink(caches[i])
+        if link:
+            print(link)
+            zzz = ZZZ(link)
+            saver.insert("Event", normalize_data(zzz.getBanner(2)))
+            saver.insert("Stable", normalize_data(zzz.getBanner(1)))
+            saver.insert("Banbu", normalize_data(zzz.getBanner(5)))
+            saver.save()
+            print("\033[92mDone!\x1b[0m")
+            print("\033[92mFile saved as:\x1b[0m", saver.save())
+            flag = True
+            break
+        sleep(1)
     for i in range(9, 0, -1):
         print(f"Window will close after: {i} s", end="\r", flush=True)
         sleep(1)
