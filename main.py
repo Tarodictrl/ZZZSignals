@@ -105,7 +105,7 @@ class Gacha:
             return
         test_result = self.testUrl(link[0])
         if test_result:
-            return link
+            return link[0]
 
     def testUrl(self, url: str) -> bool:
         try:
